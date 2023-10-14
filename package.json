@@ -1,0 +1,22 @@
+{
+  "name": "v1-interface",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "start": "ts-node src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "lumos-utils": "https://github.com/phroi/lumos-utils#79e7362"
+  },
+  "//": {
+    "lumos-utils": "file:/home/user/lumos-utils"
+  },
+  "devDependencies": {
+    "@types/node": "^20.4.4",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.1.6"
+  }
+}
