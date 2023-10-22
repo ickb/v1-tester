@@ -4,6 +4,12 @@
 
 ### Run simulation of user interactions
 
+0. Start local devnet, refer to the [Complete Setup section in iCKB core](https://github.com/ickb/v1-core/#complete-setup) for further instructions:
+
+```bash
+(trap 'kill -INT 0' SIGINT; cd ~/ckb/; ckb run --indexer & sleep 5 && ckb miner)
+```
+
 1. Download this repo in a folder of your choice:  
 
 ```bash
