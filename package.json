@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "start": "ts-node src/index.ts"
+    "newOrder": "ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -12,8 +12,10 @@
     "@ckb-lumos/base": "^0.20.0",
     "@ckb-lumos/bi": "^0.20.0",
     "@ckb-lumos/config-manager": "^0.20.0",
-    "lumos-utils": "https://github.com/phroi/lumos-utils#db19ef4",
-    "v1-core": "https://github.com/ickb/v1-core#f6829f0"
+    "@ckb-lumos/helpers": "^0.20.0",
+    "@ckb-lumos/hd": "^0.20.0",
+    "lumos-utils": "phroi/lumos-utils",
+    "v1-core": "ickb/v1-core"
   },
   "devDependencies": {
     "@types/node": "^20.4.4",
