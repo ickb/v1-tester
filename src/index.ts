@@ -1,13 +1,13 @@
-import {
-    initializeChainAdapter, secp256k1SignerFrom
-} from "lumos-utils";
-
-import { IckbTransactionBuilder, fund, newLimitOrderUtils } from "v1-core";
-
 import config from "./config.json";
 import { Config } from "@ckb-lumos/config-manager";
-import { BI, parseUnit } from "@ckb-lumos/bi";
-import { Account, randomSecp256k1Account } from "./account";
+import { TransactionSkeleton } from "@ckb-lumos/helpers";
+import {
+    I8Cell, addCells, capacitiesSifter, ckbFundAdapter, fund, getCells, getTipHeader,
+    initializeChainAdapter, secp256k1Blake160, sendTransaction, sudtSifter
+} from "@ickb/lumos-utils";
+import {
+    ICKB_SOFT_CAP_PER_DEPOSIT, ckbSoftCapPerDeposit, ickbExchangeRatio, ickbSudtFundAdapter, limitOrder
+} from "@ickb/v1-core";
 
 async function main() {
     const args = process.argv.slice(2)
@@ -16,27 +16,62 @@ async function main() {
     }
 
     await initializeChainAdapter("devnet", config as Config);
-    const { create, sudtHash } = newLimitOrderUtils();
 
-    //Genesis account
-    const genesisAccount = randomSecp256k1Account("0xd00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc");
+    const { sudtHash, sudtType, create } = limitOrder();
 
-    const newTransactionBuilder = (account: Account) => new IckbTransactionBuilder(
-        account.lockScript,
-        secp256k1SignerFrom(account.privKey)
+    //Genesis devnet account
+    const {
+        lockScript,
+        expander,
+        preSigner,
+        signer
+    } = secp256k1Blake160(
+        "0xd00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc"
     );
 
-    const { txHash } = await (await fund(newTransactionBuilder(genesisAccount)
-        .add("output", "end", create({
-            ckbAmount: args[0] == "CKB2SUDT" ? parseUnit("50000", "ckb") : undefined,
-            sudtAmount: args[0] == "SUDT2CKB" ? parseUnit("50000", "ckb") : undefined,
-            terminalLock: genesisAccount.lockScript,
-            sudtHash,
-            isSudtToCkb: false,
-            ckbMultiplier: BI.from(1),
-            sudtMultiplier: BI.from(1),
-        })))).buildAndSend();
+    const accountCells = await getCells({
+        script: lockScript,
+        scriptType: "lock",
+        scriptSearchMode: "exact"
+    });
+    const { owned: capacities, unknowns } = capacitiesSifter(accountCells, expander);
+    const { owned: sudts } = sudtSifter(unknowns, sudtType, expander);
 
+    // const feeRate = await getFeeRate();
+    const feeRate = 1000;
+    let assets = ckbFundAdapter(lockScript, feeRate, preSigner, capacities);
+    assets = ickbSudtFundAdapter(assets, lockScript, sudts);
+
+    const tipHeader = await getTipHeader();
+    const { ckbMultiplier, sudtMultiplier } = ickbExchangeRatio(tipHeader);
+
+    let tx = TransactionSkeleton();
+    tx = create(tx, {
+        ckbAmount: args[0] == "CKB2SUDT" ? ckbSoftCapPerDeposit(tipHeader).div(2) : undefined,
+        sudtAmount: args[0] == "SUDT2CKB" ? ICKB_SOFT_CAP_PER_DEPOSIT.div(2) : undefined,
+        terminalLock: lockScript,
+        sudtHash,
+        isSudtToCkb: args[0] == "SUDT2CKB",
+        ckbMultiplier,
+        sudtMultiplier,
+    });
+
+    //Consolidate CKB miner reward cells into bigger cells
+    // console.log(assets["CKB"].addFunds.length);
+    if (assets["CKB"].addFunds.length > 10) {
+        tx = addCells(tx, "append", [], [
+            I8Cell.from({
+                lock: lockScript,
+                capacity: ckbSoftCapPerDeposit(tipHeader).mul(10000).toHexString()
+            })
+        ]);
+        tx = fund(tx, assets, false);
+    } else {
+        tx = fund(tx, assets, true);
+    }
+
+
+    const txHash = await sendTransaction(signer(tx));
     console.log(txHash);
 }
 
