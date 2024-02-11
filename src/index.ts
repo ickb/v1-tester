@@ -1,17 +1,18 @@
+import { BI } from "@ckb-lumos/bi";
 import config from "./config.json";
 import { Config } from "@ckb-lumos/config-manager";
 import { TransactionSkeleton } from "@ckb-lumos/helpers";
 import {
-    I8Cell, addCells, capacitiesSifter, ckbFundAdapter, fund, getCells, getTipHeader,
-    initializeChainAdapter, secp256k1Blake160, sendTransaction, sudtSifter
+    I8Cell, addCells, ckbFundAdapter, fund, getCells, getTipHeader,
+    initializeChainAdapter, secp256k1Blake160, sendTransaction, simpleSifter
 } from "@ickb/lumos-utils";
 import {
-    ICKB_SOFT_CAP_PER_DEPOSIT, ckbSoftCapPerDeposit, ickbExchangeRatio, ickbSudtFundAdapter, limitOrder
+    ICKB_SOFT_CAP_PER_DEPOSIT, ckb2Ickb, ckbSoftCapPerDeposit, ickbExchangeRatio, ickbSudtFundAdapter, limitOrder
 } from "@ickb/v1-core";
 
 async function main() {
     const args = process.argv.slice(2)
-    if (args.length != 1 || (args[0] !== "SUDT2CKB" && args[0] !== "CKB2SUDT")) {
+    if (args.length > 1 || (args.length == 1 && args[0] !== "SUDT2CKB" && args[0] !== "CKB2SUDT")) {
         throw Error("Invalid command line arguments " + args.join(" "));
     }
 
@@ -29,13 +30,15 @@ async function main() {
         "0xd00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc"
     );
 
-    const accountCells = await getCells({
-        script: lockScript,
-        scriptType: "lock",
-        scriptSearchMode: "exact"
-    });
-    const { owned: capacities, unknowns } = capacitiesSifter(accountCells, expander);
-    const { owned: sudts } = sudtSifter(unknowns, sudtType, expander);
+    const { capacities, sudts } = simpleSifter(
+        await getCells({
+            script: lockScript,
+            scriptType: "lock",
+            scriptSearchMode: "exact"
+        }),
+        sudtType,
+        expander
+    );
 
     // const feeRate = await getFeeRate();
     const feeRate = 1000;
@@ -45,13 +48,26 @@ async function main() {
     const tipHeader = await getTipHeader();
     const { ckbMultiplier, sudtMultiplier } = ickbExchangeRatio(tipHeader);
 
+    const ickbEquivalentBalance = ckb2Ickb(assets["CKB"].balance, tipHeader).toNumber();
+    const ickbBalance = assets["ICKB_SUDT"].balance.toNumber();
+
+    const r0 = Math.random();
+    const isSudtToCkb = args.length == 1 ?
+        args[0] === "SUDT2CKB"
+        : Math.round((ickbEquivalentBalance + ickbBalance) * r0) > ickbEquivalentBalance;
+    console.log(isSudtToCkb ? "SUDT -> CKB" : "CKB -> SUDT");
+
+    const r1 = Math.random();
+    const ckbAmount = !isSudtToCkb ? BI.from(Math.round(r1 * ckbSoftCapPerDeposit(tipHeader).toNumber())) : undefined;
+    const sudtAmount = isSudtToCkb ? BI.from(Math.round(r1 * ICKB_SOFT_CAP_PER_DEPOSIT.toNumber())) : undefined;
+
     let tx = TransactionSkeleton();
     tx = create(tx, {
-        ckbAmount: args[0] == "CKB2SUDT" ? ckbSoftCapPerDeposit(tipHeader).div(2) : undefined,
-        sudtAmount: args[0] == "SUDT2CKB" ? ICKB_SOFT_CAP_PER_DEPOSIT.div(2) : undefined,
+        ckbAmount,
+        sudtAmount,
         terminalLock: lockScript,
         sudtHash,
-        isSudtToCkb: args[0] == "SUDT2CKB",
+        isSudtToCkb,
         ckbMultiplier,
         sudtMultiplier,
     });
