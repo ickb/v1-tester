@@ -41,7 +41,7 @@ cd src && ln -s /home/user/ickb/v1-core/config.json config.json && cd ..
 7. Start simulation of user interactions:
 
 ```bash
-watch -n 10 npm run newOrder
+watch -n 10 npm run newOrder devnet
 ```
 
 ## Complete Setup
