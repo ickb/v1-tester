@@ -17,7 +17,7 @@
     "@ckb-lumos/helpers": "^0.21.1",
     "@ckb-lumos/hd": "^0.21.1",
     "@ickb/lumos-utils": "^1.0.0",
-    "@ickb/v1-core": "^1.0.0"
+    "@ickb/v1-core": "^1.0.1"
   },
   "devDependencies": {
     "ts-node": "^10.9.2",
