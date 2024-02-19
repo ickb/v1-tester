@@ -1,9 +1,8 @@
 import { BI, parseUnit } from "@ckb-lumos/bi";
-import config from "./config.json";
 import { Config } from "@ckb-lumos/config-manager";
 import { TransactionSkeleton } from "@ckb-lumos/helpers";
 import {
-    ckbFundAdapter, fund, genesisDevnetKey, getCells, getFeeRate, getTipHeader,
+    ckbFundAdapter, fund, getCells, getFeeRate, getTipHeader,
     initializeChainAdapter, isChain, secp256k1Blake160, sendTransaction, simpleSifter
 } from "@ickb/lumos-utils";
 import {
@@ -12,31 +11,31 @@ import {
 } from "@ickb/v1-core";
 
 async function main() {
-    const args = process.argv.slice(2);
-    const [chain, rpcUrl, clientType] = args;
-
-    if (args.length < 1 || args.length > 3
-        || !isChain(chain)
-        || !(clientType in clientType2IsLightClient)) {
-        throw Error("Invalid command line arguments " + args.join(" "));
+    const { CHAIN, RPC_URL, CLIENT_TYPE, INTERFACE_PRIVATE_KEY, FUNDING_PRIVATE_KEY } = process.env;
+    if (!isChain(CHAIN)) {
+        throw Error("Invalid env CHAIN: " + CHAIN);
     }
-
-    await initializeChainAdapter(chain, config as Config, rpcUrl, clientType2IsLightClient[clientType]);
-
-    if (chain === "mainnet") {
+    if (CHAIN === "mainnet") {
         throw Error("Not yet ready for mainnet...")
     }
+    if (!INTERFACE_PRIVATE_KEY) {
+        throw Error("Empty env INTERFACE_PRIVATE_KEY")
+    }
+    const config: Config = await import(`../env/${CHAIN}/config.json`);
+    await initializeChainAdapter(CHAIN, config, RPC_URL, CLIENT_TYPE === "light" ? true : undefined);
 
-    const testingKey = "0x62b230406e3577dd9f7b0e9b4633b56c7a670a9fce38e5c3ec4a19e868c575d7";
-    let account = secp256k1Blake160(testingKey);
+    const account = secp256k1Blake160(INTERFACE_PRIVATE_KEY);
     const limitOrderInfo = limitOrder();
 
     const { capacities, sudts, ckb2SudtOrders, sudt2ckbOrders } = await siftCells(account, limitOrderInfo);
 
     if (capacities.length === 0 && sudts.length === 0) {
+        if (!FUNDING_PRIVATE_KEY) {
+            throw Error("Empty env FUNDING_PRIVATE_KEY")
+        }
         console.log("Funding limit order creator");
-        const genesisAccount = secp256k1Blake160(genesisDevnetKey);
-        const txHash = await genesisAccount.transfer(account.lockScript, parseUnit("10000000", "ckb"));
+        const fundingAccount = secp256k1Blake160(FUNDING_PRIVATE_KEY);
+        const txHash = await fundingAccount.transfer(account.lockScript, parseUnit("1000000", "ckb"));
         console.log(txHash);
         return;
     }
@@ -70,7 +69,7 @@ async function main() {
     // const isSudtToCkb = false;
     // const isSudtToCkb = true;
 
-    const r1 = 4 * Math.random();
+    const r1 = Math.random();
     const ckbAmount = !isSudtToCkb ? BI.from(Math.round(r1 * ckbSoftCapPerDeposit(tipHeader).toNumber())) : undefined;
     const sudtAmount = isSudtToCkb ? BI.from(Math.round(r1 * ICKB_SOFT_CAP_PER_DEPOSIT.toNumber())) : undefined;
 
@@ -141,11 +140,5 @@ async function siftCells(
         ckb2SudtOrders, sudt2ckbOrders
     }
 }
-
-const clientType2IsLightClient: { [id: string]: boolean } = {
-    "light": true,
-    "full": false,
-    undefined: false
-};
 
 main();
