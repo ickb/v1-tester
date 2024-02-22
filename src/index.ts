@@ -1,4 +1,4 @@
-import { BI, parseUnit } from "@ckb-lumos/bi";
+import { BI } from "@ckb-lumos/bi";
 import { Config } from "@ckb-lumos/config-manager";
 import { TransactionSkeleton } from "@ckb-lumos/helpers";
 import {
@@ -11,7 +11,7 @@ import {
 } from "@ickb/v1-core";
 
 async function main() {
-    const { CHAIN, RPC_URL, CLIENT_TYPE, INTERFACE_PRIVATE_KEY, FUNDING_PRIVATE_KEY } = process.env;
+    const { CHAIN, RPC_URL, CLIENT_TYPE, INTERFACE_PRIVATE_KEY } = process.env;
     if (!isChain(CHAIN)) {
         throw Error("Invalid env CHAIN: " + CHAIN);
     }
@@ -29,16 +29,7 @@ async function main() {
 
     const { capacities, sudts, ckb2SudtOrders, sudt2ckbOrders } = await siftCells(account, limitOrderInfo);
 
-    if (capacities.length === 0 && sudts.length === 0) {
-        if (!FUNDING_PRIVATE_KEY) {
-            throw Error("Empty env FUNDING_PRIVATE_KEY")
-        }
-        console.log("Funding limit order creator");
-        const fundingAccount = secp256k1Blake160(FUNDING_PRIVATE_KEY);
-        const txHash = await fundingAccount.transfer(account.lockScript, parseUnit("1000000", "ckb"));
-        console.log(txHash);
-        return;
-    }
+    //ADD some checks for initial capital////////////////////////////////////////////////////////
 
     const tipHeader = await getTipHeader();
     const feeRate = await getFeeRate();
