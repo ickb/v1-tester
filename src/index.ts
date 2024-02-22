@@ -6,7 +6,7 @@ import {
     initializeChainAdapter, isChain, secp256k1Blake160, sendTransaction, simpleSifter
 } from "@ickb/lumos-utils";
 import {
-    ICKB_SOFT_CAP_PER_DEPOSIT, ckb2Ickb, ckbSoftCapPerDeposit, ickbExchangeRatio,
+    ICKB_SOFT_CAP_PER_DEPOSIT, ckb2Ickb, ckbSoftCapPerDeposit, ickb2Ckb, ickbExchangeRatio,
     ickbSudtFundAdapter, limitOrder, limitOrderFundAdapter
 } from "@ickb/v1-core";
 
@@ -29,8 +29,6 @@ async function main() {
 
     const { capacities, sudts, ckb2SudtOrders, sudt2ckbOrders } = await siftCells(account, limitOrderInfo);
 
-    //ADD some checks for initial capital////////////////////////////////////////////////////////
-
     const tipHeader = await getTipHeader();
     const feeRate = await getFeeRate();
 
@@ -51,6 +49,16 @@ async function main() {
         "+",
         assets["ICKB_SUDT"].balance.sub(assets["ICKB_SUDT"].availableBalance).div(100000000).toString()
     );
+
+    const totalBalance = ickb2Ckb(assets["ICKB_SUDT"].balance, tipHeader).add(assets["CKB"].balance);
+    const twoDeposits = ckbSoftCapPerDeposit(tipHeader).mul(2)
+    if (totalBalance.lt(twoDeposits)) {
+        console.log();
+        console.log(`${totalBalance.div(100000000).toString()} CKB < ${twoDeposits.div(100000000).toString()} CKB`);
+        console.log("Warning: the total interface balance is lower than two standard deposits!!");
+        console.log("The interface may not be able to properly simulate random order creation.");
+        console.log();
+    }
 
     const ickbEquivalentBalance = ckb2Ickb(assets["CKB"].balance, tipHeader).toNumber();
     const ickbBalance = assets["ICKB_SUDT"].balance.toNumber();
