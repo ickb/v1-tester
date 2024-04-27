@@ -1,8 +1,8 @@
-import { BI } from "@ckb-lumos/bi";
+import { BI, parseUnit } from "@ckb-lumos/bi";
 import { Config } from "@ckb-lumos/config-manager";
-import { TransactionSkeleton } from "@ckb-lumos/helpers";
+import { TransactionSkeleton, TransactionSkeletonType } from "@ckb-lumos/helpers";
 import {
-    ckbFundAdapter, fund, getCells, getFeeRate, getTipHeader,
+    I8Cell, I8Script, addCells, ckbFundAdapter, fund, getCells, getChainInfo, getFeeRate, getTipHeader,
     initializeChainAdapter, isChain, secp256k1Blake160, sendTransaction, simpleSifter
 } from "@ickb/lumos-utils";
 import {
@@ -74,9 +74,10 @@ async function main() {
 
     let tx = TransactionSkeleton();
 
-    //Cancel CKB -> SUDT orders older than 1000 blocks
+    //Cancel old CKB -> SUDT orders
+    const maxElapsedBlocks = getChainInfo().chain === "devnet" ? 1000 : 100800;
     for (const o of ckb2SudtOrders) {
-        if (BI.from(o.cell.blockNumber).add(1000).lt(tipHeader.number)) {
+        if (BI.from(o.cell.blockNumber).add(maxElapsedBlocks).lt(tipHeader.number)) {
             console.log("Cancelling old CKB -> SUDT order");
             tx = limitOrderInfo.cancel(tx, o, false);
         } else {
@@ -92,7 +93,7 @@ async function main() {
             sudtMultiplier = sudtMultiplier.add(sudtMultiplier.div(1000));
         }
 
-        const txWithNewOrder = limitOrderInfo.create(tx, {
+        let txWithNewOrder = limitOrderInfo.create(tx, {
             ckbAmount,
             sudtAmount,
             terminalLock: account.lockScript,
@@ -101,17 +102,28 @@ async function main() {
             ckbMultiplier,
             sudtMultiplier,
         });
+
+        if (!isSudtToCkb) {
+            txWithNewOrder = setApartEmergencyCKB(txWithNewOrder, account.lockScript);
+        }
+
         tx = fund(txWithNewOrder, assets, true);
         console.log(isSudtToCkb ? "SUDT -> CKB" : "CKB -> SUDT");
         const txHash = await sendTransaction(account.signer(tx));
         console.log(txHash);
     } catch (e: any) {
+        //Order cancellation
         if (tx.outputs.size > 0) {
             tx = fund(tx, assets, true);
             const txHash = await sendTransaction(account.signer(tx));
             console.log(txHash);
         }
     }
+}
+
+function setApartEmergencyCKB(tx: TransactionSkeletonType, accountLock: I8Script) {
+    let c = I8Cell.from({ lock: accountLock, capacity: parseUnit("1000", "ckb").toHexString() });
+    return addCells(tx, "append", [], [c]);
 }
 
 async function siftCells(
