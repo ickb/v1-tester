@@ -1,135 +1,190 @@
-import { BI, parseUnit } from "@ckb-lumos/bi";
-import { Config } from "@ckb-lumos/config-manager";
-import { TransactionSkeleton, TransactionSkeletonType } from "@ckb-lumos/helpers";
+import { TransactionSkeleton } from "@ckb-lumos/helpers";
+import type { TransactionSkeletonType } from "@ckb-lumos/helpers";
 import {
-    I8Cell, I8Script, addCells, ckbFundAdapter, fund, getCells, getChainInfo, getFeeRate, getTipHeader,
-    initializeChainAdapter, isChain, secp256k1Blake160, sendTransaction, simpleSifter
+    CKB, I8Cell, I8Script, addCells, addCkbAsset, addSimpleCells, ckbDelta, ckbMark, errorNotEnoughFunds, fund,
+    getCells, getChainInfo, getFeeRate, getTipHeader, hex, initializeChainAdapter, isChain, secp256k1Blake160,
+    sendTransaction, simpleSifter
 } from "@ickb/lumos-utils";
 import {
-    ICKB_SOFT_CAP_PER_DEPOSIT, ckb2Ickb, ckbSoftCapPerDeposit, ickb2Ckb, ickbExchangeRatio,
-    ickbSudtFundAdapter, limitOrder, limitOrderFundAdapter
+    ICKB_SOFT_CAP_PER_DEPOSIT, addIckbAsset, addOrders, ckb2Ickb, ckbSoftCapPerDeposit, getIckbScriptConfigs,
+    ickb2Ckb, ickbExchangeRatio, ickbMark, ickbUdtType, limitOrderScript, orderMelt, orderMint, orderSifter
 } from "@ickb/v1-core";
+import type { MyOrder, OrderRatio } from "@ickb/v1-core";
 
 async function main() {
-    const { CHAIN, RPC_URL, CLIENT_TYPE, INTERFACE_PRIVATE_KEY } = process.env;
+    const { CHAIN, RPC_URL, CLIENT_TYPE, TESTER_PRIVATE_KEY, TESTER_SLEEP_INTERVAL } = process.env;
     if (!isChain(CHAIN)) {
         throw Error("Invalid env CHAIN: " + CHAIN);
     }
     if (CHAIN === "mainnet") {
         throw Error("Not yet ready for mainnet...")
     }
-    if (!INTERFACE_PRIVATE_KEY) {
-        throw Error("Empty env INTERFACE_PRIVATE_KEY")
+    if (!TESTER_PRIVATE_KEY) {
+        throw Error("Empty env TESTER_PRIVATE_KEY")
     }
-    const config: Config = await import(`../env/${CHAIN}/config.json`);
-    await initializeChainAdapter(CHAIN, config, RPC_URL, CLIENT_TYPE === "light" ? true : undefined);
-
-    const account = secp256k1Blake160(INTERFACE_PRIVATE_KEY);
-    const limitOrderInfo = limitOrder();
-
-    const { capacities, sudts, ckb2SudtOrders, sudt2ckbOrders } = await siftCells(account, limitOrderInfo);
-
-    const tipHeader = await getTipHeader();
-    const feeRate = await getFeeRate();
-
-    let assets = ckbFundAdapter(account.lockScript, feeRate, account.preSigner, capacities);
-    assets = ickbSudtFundAdapter(assets, account.lockScript, sudts);
-    assets = limitOrderFundAdapter(assets, ckb2SudtOrders, sudt2ckbOrders);
-
-    console.log(
-        "CKB :",
-        assets["CKB"].availableBalance.div(100000000).toString(),
-        "+",
-        assets["CKB"].balance.sub(assets["CKB"].availableBalance).div(100000000).toString()
-    );
-
-    console.log(
-        "ICKB:",
-        assets["ICKB_SUDT"].availableBalance.div(100000000).toString(),
-        "+",
-        assets["ICKB_SUDT"].balance.sub(assets["ICKB_SUDT"].availableBalance).div(100000000).toString()
-    );
-
-    const totalBalance = ickb2Ckb(assets["ICKB_SUDT"].balance, tipHeader).add(assets["CKB"].balance);
-    const twoDeposits = ckbSoftCapPerDeposit(tipHeader).mul(2)
-    if (totalBalance.lt(twoDeposits)) {
-        console.log();
-        console.log(`${totalBalance.div(100000000).toString()} CKB < ${twoDeposits.div(100000000).toString()} CKB`);
-        console.log("Warning: the total interface balance is lower than two standard deposits!!");
-        console.log("The interface may not be able to properly simulate random order creation.");
-        console.log();
+    if (!TESTER_SLEEP_INTERVAL || Number(TESTER_SLEEP_INTERVAL) < 1) {
+        throw Error("Invalid env TESTER_SLEEP_INTERVAL")
     }
 
-    const ickbEquivalentBalance = ckb2Ickb(assets["CKB"].balance, tipHeader).toNumber();
-    const ickbBalance = assets["ICKB_SUDT"].balance.toNumber();
+    await initializeChainAdapter(CHAIN, RPC_URL, CLIENT_TYPE === "light" ? true : undefined, getIckbScriptConfigs);
+    const account = secp256k1Blake160(TESTER_PRIVATE_KEY);
+    const sleepInterval = Number(TESTER_SLEEP_INTERVAL) * 1000;
 
-    const r0 = Math.random();
-    const isSudtToCkb = Math.round((ickbEquivalentBalance + ickbBalance) * r0) > ickbEquivalentBalance;
-    // const isSudtToCkb = false;
-    // const isSudtToCkb = true;
+    while (true) {
+        let executionLog: any = {};
+        let startTime = new Date();
+        executionLog.startTime = startTime.toLocaleString();
+        try {
+            const { capacities, udts, myOrders } = await siftCells(account);
 
-    const r1 = Math.random();
-    const ckbAmount = !isSudtToCkb ? BI.from(Math.round(r1 * ckbSoftCapPerDeposit(tipHeader).toNumber())) : undefined;
-    const sudtAmount = isSudtToCkb ? BI.from(Math.round(r1 * ICKB_SOFT_CAP_PER_DEPOSIT.toNumber())) : undefined;
+            const tipHeader = await getTipHeader();
+            const feeRate = await getFeeRate();
+            const minChange = 0n;//Use minChange as relevant instead of setApartEmergencyCKB /////////////////////////
 
-    let tx = TransactionSkeleton();
+            let assets = addCkbAsset({}, account.lockScript, feeRate, account.preSigner, minChange);
+            assets = addIckbAsset(assets, account.lockScript);
+            assets = addSimpleCells(assets, capacities, udts);
+            assets = addOrders(assets, myOrders);
 
-    //Cancel old CKB -> SUDT orders
-    const maxElapsedBlocks = getChainInfo().chain === "devnet" ? 1000 : 100800;
-    for (const o of ckb2SudtOrders) {
-        if (BI.from(o.cell.blockNumber).add(maxElapsedBlocks).lt(tipHeader.number)) {
-            console.log("Cancelling old CKB -> SUDT order");
-            tx = limitOrderInfo.cancel(tx, o, false);
-        } else {
-            break;
+            executionLog.balance = {
+                "CKB": {
+                    total: fmtCkb(assets[ckbMark].estimated),
+                    available: fmtCkb(assets[ckbMark].estimatedAvailable),
+                    unavailable: fmtCkb(assets[ckbMark].estimated - assets[ckbMark].estimatedAvailable),
+                }, "ICKB": {
+                    total: fmtCkb(assets[ickbMark].estimated),
+                    available: fmtCkb(assets[ickbMark].estimatedAvailable),
+                    unavailable: fmtCkb(assets[ickbMark].estimated - assets[ickbMark].estimatedAvailable),
+                }, "totalEquivalent": {
+                    "CKB": fmtCkb(assets[ckbMark].estimated + ickb2Ckb(assets[ickbMark].estimated, tipHeader)),
+                    "ICKB": fmtCkb(ckb2Ickb(assets[ckbMark].estimated, tipHeader) + assets[ickbMark].estimated),
+                }
+            };
+            executionLog.ratio = ickbExchangeRatio(tipHeader);
+
+            const ickbEquivalentBalance = Number(ckb2Ickb(assets[ckbMark].estimated, tipHeader));
+            const ickbBalance = Number(assets[ickbMark].estimated);
+
+            let r = Math.random();
+            const isCkb2Udt = Math.round((ickbEquivalentBalance + ickbBalance) * r) <= ickbEquivalentBalance;
+            // const isCkb2Udt = false;
+            // const isCkb2Udt = true;
+
+            r = Math.random();
+            const ckbAmount = isCkb2Udt ? BigInt(Math.round(r * Number(ckbSoftCapPerDeposit(tipHeader)))) : 0n;
+            const udtAmount = isCkb2Udt ? 0n : BigInt(Math.round(r * Number(ICKB_SOFT_CAP_PER_DEPOSIT)));
+
+            let { ckbMultiplier, udtMultiplier } = ickbExchangeRatio(tipHeader);
+            //Pay 0.1% fee to bot
+            if (isCkb2Udt) {
+                udtMultiplier = udtMultiplier + udtMultiplier / 1000n;
+            } else {
+                udtMultiplier = udtMultiplier - udtMultiplier / 1000n;
+            }
+
+            const ratio: OrderRatio = {
+                ckbMultiplier,
+                udtMultiplier,
+            }
+
+            //Cancel old CKB -> UDT orders
+            const maxElapsedBlocks = getChainInfo().chain === "devnet" ? 1000n : 100800n;
+            const oldOrders: MyOrder[] = [];
+            for (const o of myOrders) {
+                if (!o.info.isCkb2UdtMatchable) {
+                    continue;
+                }
+                if (BigInt(o.cell.blockNumber!) + maxElapsedBlocks >= BigInt(tipHeader.number)) {
+                    continue;
+                }
+                oldOrders.push(o);
+            }
+
+            let tx = TransactionSkeleton()
+            tx = orderMint(tx, {
+                accountLock: account.lockScript,
+                ckbAmount,
+                udtAmount,
+                ckbToUdt: isCkb2Udt ? ratio : undefined,
+                udtToCkb: isCkb2Udt ? undefined : ratio
+            });
+            if (isCkb2Udt) {
+                tx = setApartEmergencyCKB(tx, account.lockScript);
+            }
+            tx = orderMelt(tx, ...oldOrders);
+
+            // console.log(JSON.stringify(tx, undefined, 2));
+
+            try {
+                tx = fund(tx, assets, true);
+                executionLog.actions = {
+                    newOrder: (isCkb2Udt ? {
+                        giveCkb: fmtCkb(ckbAmount),
+                        takeIckb: fmtCkb(ckbAmount * ratio.ckbMultiplier / ratio.udtMultiplier),
+                        fee: fmtCkb(
+                            ckbAmount - ickb2Ckb(ckbAmount * ratio.ckbMultiplier / ratio.udtMultiplier, tipHeader)
+                        )
+                    } : {
+                        giveIckb: fmtCkb(udtAmount),
+                        takeCkb: fmtCkb(udtAmount * ratio.udtMultiplier / ratio.ckbMultiplier),
+                        fee: fmtCkb(
+                            ickb2Ckb(udtAmount, tipHeader) - (udtAmount * ratio.udtMultiplier / ratio.ckbMultiplier)
+                        )
+                    }),
+                    cancelledOrders: oldOrders.length,
+                };
+                executionLog.txFee = {
+                    fee: fmtCkb(ckbDelta(tx, 0n)),
+                    feeRate,
+                };
+                executionLog.txHash = await sendTransaction(account.signer(tx));
+            } catch (e: any) {
+                if (!e || e.message !== errorNotEnoughFunds) {
+                    throw e;
+                }
+                //Handle not enough funds, try just to cancel old orders
+                if (oldOrders.length > 0) {
+                    tx = TransactionSkeleton();
+                    tx = orderMelt(tx, ...oldOrders);
+                    tx = fund(tx, assets, true);
+                    executionLog.actions = {
+                        cancelledOrders: oldOrders.length,
+                    };
+                    executionLog.txFee = {
+                        fee: Number(ckbDelta(tx, 0n)) / Number(CKB),
+                        feeRate: Number(ckbDelta(tx, 0n)) / Number(CKB),
+                    };
+                    executionLog.txHash = await sendTransaction(account.signer(tx));
+                }
+            }
+        } catch (e: any) {
+            if (e) {
+                executionLog.error = { ...e, stack: e.stack ?? "" };
+            } else {
+                executionLog.message = "Empty";
+            }
         }
-    }
+        executionLog.ElapsedSeconds = Math.round((new Date().getTime() - startTime.getTime()) / 1000);
+        console.log(JSON.stringify(executionLog, replacer, " ") + ",");
 
-    try {
-        let { ckbMultiplier, sudtMultiplier } = ickbExchangeRatio(tipHeader);
-        if (isSudtToCkb) {//Pay 0.1% fee to bot
-            sudtMultiplier = sudtMultiplier.sub(sudtMultiplier.div(1000));
-        } else {
-            sudtMultiplier = sudtMultiplier.add(sudtMultiplier.div(1000));
-        }
-
-        let txWithNewOrder = limitOrderInfo.create(tx, {
-            ckbAmount,
-            sudtAmount,
-            terminalLock: account.lockScript,
-            sudtHash: limitOrderInfo.sudtHash,
-            isSudtToCkb,
-            ckbMultiplier,
-            sudtMultiplier,
-        });
-
-        if (!isSudtToCkb) {
-            txWithNewOrder = setApartEmergencyCKB(txWithNewOrder, account.lockScript);
-        }
-
-        tx = fund(txWithNewOrder, assets, true);
-        console.log(isSudtToCkb ? "SUDT -> CKB" : "CKB -> SUDT");
-        const txHash = await sendTransaction(account.signer(tx));
-        console.log(txHash);
-    } catch (e: any) {
-        //Order cancellation
-        if (tx.outputs.size > 0) {
-            tx = fund(tx, assets, true);
-            const txHash = await sendTransaction(account.signer(tx));
-            console.log(txHash);
-        }
+        await new Promise(r => setTimeout(r, sleepInterval));
     }
 }
 
+function fmtCkb(b: bigint) {
+    return Number(b) / Number(CKB);
+}
+
+function replacer(_: unknown, value: unknown) {
+    return typeof value === "bigint" ? Number(value) : value
+};
+
 function setApartEmergencyCKB(tx: TransactionSkeletonType, accountLock: I8Script) {
-    let c = I8Cell.from({ lock: accountLock, capacity: parseUnit("1000", "ckb").toHexString() });
+    let c = I8Cell.from({ lock: accountLock, capacity: hex(1000n * CKB) });
     return addCells(tx, "append", [], [c]);
 }
 
-async function siftCells(
-    account: ReturnType<typeof secp256k1Blake160>,
-    limitOrderInfo: ReturnType<typeof limitOrder>
-) {
+async function siftCells(account: ReturnType<typeof secp256k1Blake160>) {
     const cells = (await Promise.all([
         getCells({
             script: account.lockScript,
@@ -137,19 +192,16 @@ async function siftCells(
             scriptSearchMode: "exact"
         }),
         getCells({
-            script: limitOrderInfo.limitOrderLock,
+            script: limitOrderScript(),
             scriptType: "lock",
             scriptSearchMode: "prefix"
         })
     ])).flat();
 
-    const { capacities, sudts, notSimples } = simpleSifter(cells, limitOrderInfo.sudtType, account.expander);
-    const { ckb2SudtOrders, sudt2ckbOrders } = limitOrderInfo.sifter(notSimples, account.lockScript, "desc");
+    const { notSimples, capacities, types: udts } = simpleSifter(cells, ickbUdtType(), account.expander);
+    const { myOrders } = orderSifter(notSimples, account.expander);
 
-    return {
-        capacities, sudts,
-        ckb2SudtOrders, sudt2ckbOrders
-    }
+    return { capacities, udts, myOrders };
 }
 
 main();
