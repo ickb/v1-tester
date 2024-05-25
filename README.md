@@ -17,10 +17,16 @@ cd v1-tester
 3. Install dependencies:
 
 ```bash
-pnpm i
+pnpm install
 ```
 
-4. Define a `env/testnet/.env` file, for example:
+4. Build project:
+
+```bash
+pnpm build
+```
+
+5. Define a `env/testnet/.env` file, for example:
 
 ```
 CHAIN=testnet
@@ -34,7 +40,7 @@ Optionally the property `RPC_URL` can also be specified:
 RPC_URL=http://127.0.0.1:8114/
 ```
 
-5. Start simulation of user interactions:
+6. Start simulation of user interactions:
 
 ```bash
 export CHAIN=testnet;
