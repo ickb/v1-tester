@@ -1,6 +1,6 @@
 # iCKB v1 tester
 
-## Run the simulation of limit order creation on testnet
+## Run the simulation of iCKB limit order creation on testnet
 
 1. Download this repo in a folder of your choice:  
 
