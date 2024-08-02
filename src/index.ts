@@ -152,10 +152,16 @@ async function main() {
           );
 
       if (ckbAmount <= 0n && udtAmount <= 0) {
-        executionLog.error =
-          "Not enough funds to continue testing, shutting down...";
-        console.log(JSON.stringify(executionLog, replacer, " "));
-        return;
+        if (
+          ckbBalance + ickb2Ckb(ickbUdtBalance, tipHeader) <
+          ckbSoftCapPerDeposit(tipHeader) / 20n // ~ 5000 CKB
+        ) {
+          executionLog.error =
+            "Not enough funds to continue testing, shutting down...";
+          console.log(JSON.stringify(executionLog, replacer, " "));
+          return;
+        }
+        continue;
       }
 
       const { ckbMultiplier, udtMultiplier } = ickbExchangeRatio(tipHeader);
@@ -236,7 +242,7 @@ async function main() {
     executionLog.ElapsedSeconds = Math.round(
       (new Date().getTime() - startTime.getTime()) / 1000,
     );
-    console.log(JSON.stringify(executionLog, replacer, " ") + ",");
+    console.log(JSON.stringify(executionLog, replacer, " "));
   }
 }
 
