@@ -14,12 +14,14 @@ import {
   addCells,
   addCkbChange,
   addWitnessPlaceholder,
+  calculateTxFee,
   chainConfigFrom,
   ckbDelta,
   isChain,
   lockExpanderFrom,
   min,
   simpleSifter,
+  txSize,
   type ChainConfig,
   type ConfigAdapter,
 } from "@ickb/lumos-utils";
@@ -48,9 +50,6 @@ async function main() {
     process.env;
   if (!isChain(CHAIN)) {
     throw Error("Invalid env CHAIN: " + CHAIN);
-  }
-  if (CHAIN === "mainnet") {
-    throw Error("Not yet ready for mainnet...");
   }
   if (!TESTER_PRIVATE_KEY) {
     throw Error("Empty env TESTER_PRIVATE_KEY");
@@ -105,7 +104,7 @@ async function main() {
         receipts: [],
         wrGroups: [],
       });
-      const ckbBalance = ckbDelta(baseTx, 0n, config);
+      const ckbBalance = ckbDelta(baseTx, config);
       const ickbUdtBalance = ickbDelta(baseTx, config);
 
       executionLog.balance = {
@@ -228,7 +227,7 @@ async function main() {
         cancelledOrders: myOrders.filter((o) => o.info.isMatchable).length,
       };
       executionLog.txFee = {
-        fee: fmtCkb(ckbDelta(tx, 0n, config)),
+        fee: fmtCkb(ckbDelta(tx, config)),
         feeRate,
       };
       executionLog.txHash = await rpc.sendTransaction(account.signer(tx));
@@ -292,8 +291,15 @@ function addChange(
   ({ tx, freeCkb } = addCkbChange(
     tx,
     accountLock,
-    feeRate,
-    addPlaceholders,
+    (txWithDummyChange: TransactionSkeletonType) => {
+      const baseFee = calculateTxFee(
+        txSize(addPlaceholders(txWithDummyChange)),
+        feeRate,
+      );
+      // Use a fee that is multiple of N=1249
+      const N = 1249n;
+      return ((baseFee + (N - 1n)) / N) * N;
+    },
     config,
   ));
 
@@ -340,6 +346,7 @@ function secp256k1Blake160(privateKey: string, config: ConfigAdapter) {
   }
 
   function signer(tx: TransactionSkeletonType) {
+    tx = preSigner(tx);
     tx = prepareSigningEntries(tx, { config });
     const message = tx.get("signingEntries").get(0)!.message; //How to improve in case of multiple locks?
     const sig = key.signRecoverable(message!, privateKey);
