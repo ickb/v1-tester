@@ -137,16 +137,14 @@ async function main() {
       r = Math.random();
       const ckbAmount = isCkb2Udt
         ? min(
-            BigInt(
-              Math.round(10 * r * Number(ckbSoftCapPerDeposit(tipHeader))),
-            ),
+            BigInt(Math.round(r * Number(ckbSoftCapPerDeposit(tipHeader)))),
             ckbBalance - 2000n * CKB,
           )
         : 0n;
       const udtAmount = isCkb2Udt
         ? 0n
         : min(
-            BigInt(Math.round(10 * r * Number(ICKB_SOFT_CAP_PER_DEPOSIT))),
+            BigInt(Math.round(r * Number(ICKB_SOFT_CAP_PER_DEPOSIT))),
             ickbUdtBalance,
           );
 
