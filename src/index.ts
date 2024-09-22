@@ -84,8 +84,11 @@ async function main() {
       const tipHeader = I8Header.from(await rpc.getTipHeader());
       const feeRate = await rpc.getFeeRate(61n);
 
-      const maxElapsedBlocks = chain === "devnet" ? 500n : 100800n;
+      const maxElapsedBlocks = chain === "devnet" ? 500n : 100800n; //One week wait on testnet
       // Wait for new orders to be matched
+
+      // console.log(JSON.stringify(myOrders, replacer, " "));
+
       if (
         myOrders.some(
           (o) =>
@@ -335,7 +338,7 @@ function secp256k1Blake160(privateKey: string, config: ConfigAdapter) {
     args: key.publicKeyToBlake160(publicKey),
   });
 
-  const address = encodeToAddress(lockScript);
+  const address = encodeToAddress(lockScript, { config });
 
   const expander = lockExpanderFrom(lockScript);
 
