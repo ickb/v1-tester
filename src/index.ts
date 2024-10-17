@@ -17,6 +17,7 @@ import {
   calculateTxFee,
   chainConfigFrom,
   ckbDelta,
+  hex,
   isChain,
   lockExpanderFrom,
   min,
@@ -44,6 +45,7 @@ import {
   orderSifter,
 } from "@ickb/v1-core";
 import type { MyOrder, OrderRatio } from "@ickb/v1-core";
+import type { Cell, Transaction } from "@ckb-lumos/base";
 
 async function main() {
   const { CHAIN, RPC_URL, TESTER_PRIVATE_KEY, TESTER_SLEEP_INTERVAL } =
@@ -312,7 +314,7 @@ async function siftCells(
   chainConfig: ChainConfig,
 ) {
   const { rpc, config } = chainConfig;
-  const cells = (
+  const mixedCells = (
     await Promise.all(
       [account.lockScript, limitOrderScript(config)].map((lock) =>
         rpc.getCellsByLock(lock, "desc", "max"),
@@ -320,15 +322,86 @@ async function siftCells(
     )
   ).flat();
 
+  const { expander } = account;
+
+  // Prefetch txs outputs
+  const wantedTxsOutputs = new Set<string>();
+  const deferredGetTxsOutputs = (txHash: string) => {
+    wantedTxsOutputs.add(txHash);
+    return [];
+  };
+  orderSifter(mixedCells, expander, deferredGetTxsOutputs, config);
+  const txsOutputsPromise = getTxsOutputs(wantedTxsOutputs, chainConfig);
+
+  // Sift capacities and udts
   const {
     notSimples,
     capacities,
     types: udts,
-  } = simpleSifter(cells, ickbUdtType(config), account.expander);
-  const { myOrders } = orderSifter(notSimples, account.expander, config);
+  } = simpleSifter(mixedCells, ickbUdtType(config), account.expander);
+
+  // Await for txsOutputs
+  const txsOutputs = await txsOutputsPromise;
+
+  // Sift through Orders
+  const { myOrders } = orderSifter(
+    notSimples,
+    expander,
+    (txHash) => txsOutputs.get(txHash) ?? [],
+    config,
+  );
 
   return { capacities, udts, myOrders };
 }
+
+async function getTxsOutputs(txHashes: Set<string>, chainConfig: ChainConfig) {
+  const { rpc } = chainConfig;
+
+  const result = new Map<string, Readonly<Cell[]>>();
+  const batch = rpc.createBatchRequest();
+  for (const txHash of txHashes) {
+    const outputs = _knownTxsOutputs.get(txHash);
+    if (outputs !== undefined) {
+      result.set(txHash, outputs);
+      continue;
+    }
+    batch.add("getTransaction", txHash);
+  }
+
+  if (batch.length === 0) {
+    return _knownTxsOutputs;
+  }
+
+  for (const tx of (await batch.exec()).map(
+    ({ transaction: tx }: { transaction: Transaction }) => tx,
+  )) {
+    result.set(
+      tx.hash!,
+      Object.freeze(
+        tx.outputs.map(({ lock, type, capacity }, index) =>
+          Object.freeze(<Cell>{
+            cellOutput: Object.freeze({
+              lock: Object.freeze(lock),
+              type: Object.freeze(type),
+              capacity: Object.freeze(capacity),
+            }),
+            data: Object.freeze(tx.outputsData[index] ?? "0x"),
+            outPoint: Object.freeze({
+              txHash: tx.hash!,
+              index: hex(index),
+            }),
+          }),
+        ),
+      ),
+    );
+  }
+
+  const frozenResult = Object.freeze(result);
+  _knownTxsOutputs = frozenResult;
+  return frozenResult;
+}
+
+let _knownTxsOutputs = Object.freeze(new Map<string, Readonly<Cell[]>>());
 
 function secp256k1Blake160(privateKey: string, config: ConfigAdapter) {
   const publicKey = key.privateToPublic(privateKey);
